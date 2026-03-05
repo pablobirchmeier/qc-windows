@@ -102,26 +102,125 @@ class WindowsNetworkManager implements NetworkManagerInterface
 
     public function connectToWifi(string $ssid, string $password): array
     {
+        $results = [];
+
+        // 1. Primero intentar habilitar el radio WiFi
+        Log::info("Verificando estado del radio WiFi...");
+        $enableRadio = $this->enableWifiRadio();
+        $results['enable_radio'] = $enableRadio;
+
+        // 2. Verificar que el adaptador WiFi está habilitado
+        $enableAdapter = $this->enableWifiAdapter();
+        $results['enable_adapter'] = $enableAdapter;
+
+        sleep(2); // Esperar a que el adaptador se inicialice
+
+        // 3. Crear y agregar el perfil WiFi
         $profileXml = $this->generateWifiProfileXml($ssid, $password);
         $profilePath = storage_path("app/wifi_profile_" . preg_replace('/[^a-zA-Z0-9]/', '_', $ssid) . ".xml");
 
         file_put_contents($profilePath, $profileXml);
 
-        $results = [];
         $addProfileCmd = "netsh wlan add profile filename=\"{$profilePath}\"";
         $results['add_profile'] = $this->executeCommand($addProfileCmd, "Agregar perfil WiFi {$ssid}");
 
+        // 4. Conectar a la red WiFi
         $connectCmd = "netsh wlan connect name=\"{$ssid}\" ssid=\"{$ssid}\" interface=\"{$this->wifiInterface}\"";
         $results['connect'] = $this->executeCommand($connectCmd, "Conectar a {$ssid}");
 
-        sleep(5);
+        // 5. Esperar y verificar la conexión (con reintentos)
+        $maxAttempts = 3;
+        $connected = false;
+
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            Log::info("Verificando conexión WiFi, intento {$attempt}/{$maxAttempts}...");
+            sleep(5);
+
+            $statusResult = $this->getWifiStatus();
+            $connected = $this->isWifiConnected($statusResult['output'], $ssid);
+
+            if ($connected) {
+                Log::info("WiFi conectado exitosamente a {$ssid}");
+                break;
+            }
+
+            Log::warning("WiFi no conectado aún, esperando...");
+        }
+
         $results['status'] = $this->getWifiStatus();
+        $results['status']['connected'] = $connected;
+        $results['status']['success'] = $connected;
 
         if (file_exists($profilePath)) {
             unlink($profilePath);
         }
 
         return $results;
+    }
+
+    /**
+     * Habilitar el radio WiFi por software
+     */
+    protected function enableWifiRadio(): array
+    {
+        // Intentar habilitar el radio WiFi con netsh (requiere admin)
+        $radioCmd = 'powershell -Command "netsh wlan set radiostate wifi on" 2>&1';
+        return $this->executeCommand($radioCmd, 'Habilitar radio WiFi');
+    }
+
+    /**
+     * Habilitar el adaptador WiFi
+     */
+    protected function enableWifiAdapter(): array
+    {
+        $command = "powershell -Command \"Enable-NetAdapter -Name '{$this->wifiInterface}' -Confirm:\$false\" 2>&1";
+        return $this->executeCommand($command, 'Habilitar adaptador WiFi');
+    }
+
+    /**
+     * Verificar si el WiFi está conectado parseando el output de netsh
+     * Soporta tanto español como inglés
+     */
+    protected function isWifiConnected(string $output, string $expectedSsid = null): bool
+    {
+        $output = strtolower($output);
+
+        // Verificar estado de conexión (español e inglés)
+        $connectedPatterns = [
+            'estado                  : conectado',
+            'state                   : connected',
+            'estado.*conectado',
+            'state.*connected'
+        ];
+
+        $isConnected = false;
+        foreach ($connectedPatterns as $pattern) {
+            if (strpos($output, $pattern) !== false || preg_match('/' . $pattern . '/i', $output)) {
+                $isConnected = true;
+                break;
+            }
+        }
+
+        if (!$isConnected) {
+            Log::warning("WiFi no está en estado conectado. Output: " . substr($output, 0, 500));
+            return false;
+        }
+
+        // Si se especificó un SSID, verificar que estamos conectados a ese SSID
+        if ($expectedSsid !== null) {
+            $ssidLower = strtolower($expectedSsid);
+            if (strpos($output, "ssid") !== false && strpos($output, $ssidLower) !== false) {
+                return true;
+            }
+            // Buscar el SSID en el output
+            if (preg_match('/ssid\s*:\s*' . preg_quote($ssidLower, '/') . '/i', $output)) {
+                return true;
+            }
+            Log::warning("Conectado a WiFi pero no al SSID esperado: {$expectedSsid}");
+            return false;
+        }
+
+        return true;
     }
 
     public function disconnectWifi(): array
@@ -148,11 +247,52 @@ class WindowsNetworkManager implements NetworkManagerInterface
         return $this->executeCommand($command, 'Listar interfaces');
     }
 
+    /**
+     * Escanear redes WiFi disponibles
+     */
+    public function scanAvailableNetworks(): array
+    {
+        $command = "netsh wlan show networks mode=bssid";
+        return $this->executeCommand($command, 'Escanear redes WiFi');
+    }
+
+    /**
+     * Obtener diagnóstico completo del estado WiFi
+     */
+    public function getWifiDiagnostics(): array
+    {
+        $diagnostics = [];
+
+        // Estado de la interfaz WiFi
+        $diagnostics['interface_status'] = $this->getWifiStatus();
+
+        // Verificar si el radio está habilitado
+        $output = strtolower($diagnostics['interface_status']['output']);
+        $diagnostics['radio_enabled'] = strpos($output, 'software activado') !== false
+            || strpos($output, 'software on') !== false
+            || strpos($output, 'software habilitado') !== false;
+
+        $diagnostics['radio_disabled_by_software'] = strpos($output, 'software desactivado') !== false
+            || strpos($output, 'software off') !== false;
+
+        // Estado de conexión
+        $diagnostics['is_connected'] = $this->isWifiConnected($output);
+
+        // Redes disponibles
+        $diagnostics['available_networks'] = $this->scanAvailableNetworks();
+
+        // Adaptadores de red
+        $diagnostics['adapters'] = $this->getNetworkInterfaces();
+
+        return $diagnostics;
+    }
+
     public function testInternetConnectivity(): array
     {
         $sites = [
             'google' => 'https://www.google.com',
             'cloudflare' => 'https://1.1.1.1',
+            'youtube' => 'https://www.youtube.com',
         ];
 
         $results = [];

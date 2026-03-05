@@ -256,4 +256,94 @@ class RouterScrapper8115
 
         return $this->result;
     }
+
+    /**
+     * Configura el identificador GPON (ONT ID) en el router
+     * Requiere acceso con el usuario 'Support'
+     */
+    public function configGpon($gpon)
+    {
+        try {
+            // PASO 1: Obtener página inicial para establecer sesión
+            $this->client->get('/index_instalacion.asp');
+
+            // PASO 2: Login en instalación con usuario "Support"
+            $transformedUsernameSupport = $this->mess_userpass('Support');
+            $transformedPasswordSupport = $this->mess_userpass($this->password);
+
+            $loginResponse = $this->client->post('/cgi-bin/te_acceso_router.cgi', [
+                'form_params' => [
+                    'curWebPage' => '/me_install.asp',
+                    'loginUsername' => $transformedUsernameSupport,
+                    'loginPassword' => $transformedPasswordSupport
+                ]
+            ]);
+
+            if ($loginResponse->getStatusCode() !== 200) {
+                throw new Exception("Error al autenticar en el portal de instalación.");
+            }
+
+            // PASO 3: Obtener me_install.asp para extraer sessionKey
+            $installResponse = $this->client->get('/me_install.asp');
+            $installHtml = (string) $installResponse->getBody();
+
+            if (!preg_match("/var sessionKey = '(\d+)';/", $installHtml, $matches)) {
+                throw new Exception("No se pudo obtener la sessionKey desde me_install.asp");
+            }
+            $sessionKey = $matches[1];
+
+            // PASO 4: Enviar la configuración del GPON
+            $body = http_build_query([
+                'sessionKey' => $sessionKey,
+                'gponAsciiPw' => (string)$gpon,
+                'acsInstall' => '1',
+                'gponUp' => '0',
+                'onuState' => '0'
+            ]);
+
+            $configResponse = $this->client->post('/cgi-bin/te_install.cmd', [
+                'body' => $body,
+                'headers' => [
+                    'Content-Type' => 'application/x-www-form-urlencoded',
+                    'Referer' => "http://{$this->ip}/me_install.asp",
+                    'Content-Length' => strlen($body),
+                ],
+                'expect' => false,
+                'curl' => [
+                    CURLOPT_FORBID_REUSE => true,
+                    CURLOPT_FRESH_CONNECT => true,
+                    CURLOPT_HTTP09_ALLOWED => true,
+                ]
+            ]);
+
+            return [
+                'status' => 'success',
+                'message' => 'Configuración GPON enviada correctamente',
+                'debug' => [
+                    'input_gpon' => $gpon,
+                    'session_key' => $sessionKey,
+                    'http_status' => $configResponse->getStatusCode()
+                ]
+            ];
+
+        } catch (Exception $e) {
+            return [
+                'status' => 'error',
+                'error' => 'Error al configurar GPON: ' . $e->getMessage(),
+                'debug_info' => [
+                    'input_gpon' => $gpon ?? 'null',
+                    'session_key' => $sessionKey ?? 'not_found',
+                    'trace' => $e->getTraceAsString()
+                ]
+            ];
+        }
+    }
+
+    /**
+     * Resetea el identificador GPON (ONT ID) del router a 000000
+     */
+    public function resetConfigGpon()
+    {
+        return $this->configGpon('000000');
+    }
 }

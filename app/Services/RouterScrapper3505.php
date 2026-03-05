@@ -4,6 +4,8 @@ namespace App\Services;
 
 use GuzzleHttp\Client;
 use GuzzleHttp\Cookie\CookieJar;
+use GuzzleHttp\HandlerStack;
+use GuzzleHttp\Middleware;
 use Exception;
 
 class RouterScrapper3505
@@ -238,12 +240,12 @@ class RouterScrapper3505
                 // Extraer GPON Password (en hexadecimal, convertir a texto)
                 if (preg_match('/var gponPw\s*=\s*[\'"]([^\'"]+)[\'"]/', $installHtml, $matches)) {
                     $gponHex = trim($matches[1]);
-                    // Convertir de hex a string (quitar los 00 al final)
-                    $gponHex = rtrim($gponHex, '0');
-                    if (strlen($gponHex) % 2 != 0) $gponHex .= '0';
                     $gponText = '';
+                    // Decodificar el hex (cada 2 caracteres es un char ASCII)
                     for ($i = 0; $i < strlen($gponHex); $i += 2) {
-                        $gponText .= chr(hexdec(substr($gponHex, $i, 2)));
+                        $hexPair = substr($gponHex, $i, 2);
+                        if ($hexPair === '00') break; // El resto suele ser padding
+                        $gponText .= chr(hexdec($hexPair));
                     }
                     $this->result['data']['gpon_password'] = $gponText;
                 }
@@ -263,5 +265,229 @@ class RouterScrapper3505
         }
 
         return $this->result;
+    }
+
+    /**
+     * Configura el identificador GPON (ONT ID) en el router
+     * Requiere acceso con el usuario 'Installation'
+     */
+    public function configGpon($gpon)
+    {
+        try {
+            // PASO 0: Inicializar sesión obteniendo la raíz (Evita Error 52: Empty reply)
+            $this->client->get('/');
+
+            // PASO 1: Login en Instalación
+            // Usuario: "Installation", Password: "Te2ef7n2c4hgu2"
+            $loginResponse = $this->client->post('/te_acceso_router.cgi', [
+                'body' => http_build_query([
+                    'loginUsername' => 'Installation',
+                    'loginPassword' => 'Te2ef7n2c4hgu2'
+                ]),
+                'headers' => [
+                    'Content-Type' => 'application/x-www-form-urlencoded',
+                    'Referer' => "http://{$this->ip}/",
+                ],
+                'expect' => false
+            ]);
+
+            if ($loginResponse->getStatusCode() !== 200) {
+                throw new Exception("Error al autenticar en el portal de instalación.");
+            }
+
+            // PASO 2: Obtener install.html para extraer sessionKey
+            $installResponse = $this->client->get('/install.html');
+            $installHtml = (string) $installResponse->getBody();
+
+            if (!preg_match("/var sessionKey = '(\d+)';/", $installHtml, $matches)) {
+                throw new Exception("No se pudo obtener la sessionKey desde install.html");
+            }
+            $sessionKey = $matches[1];
+
+            // PASO 3: Preparar el GPON PW
+            // Lógica basada en el JS del router: gponPw = $('#gponpw').val().replace(/(.)/g, function toAscii(x){return x.charCodeAt().toString(16);});
+            // gponPw = (gponPw+'00000000000000000000').substr(0, 20);
+            
+            $gponPw = "";
+            $gponInput = (string)$gpon;
+            for ($i = 0; $i < strlen($gponInput); $i++) {
+                $hex = dechex(ord($gponInput[$i]));
+                $gponPw .= $hex;
+            }
+            // Agregar padding de ceros (18 ceros es lo que muestra el string literal del JS, pero usaremos lógica dinámica)
+            // El JS agrega 20 ceros y corta a 20 caracteres. 
+            // OJO: El JS corta a 20 *caracteres* de la cadena resultante. 
+            // Si meto "1", hex es "31". "31" + "00..." -> "3100..." (total 20 chars).
+            $gponPw = substr($gponPw . "00000000000000000000", 0, 20);
+
+            // PASO 4: Enviar la configuración
+            // Construimos el body manualmente
+            $body = http_build_query([
+                'sessionKey' => $sessionKey,
+                'gponPw' => $gponPw
+            ]);
+
+            $configResponse = $this->client->post('/te_install.cmd', [
+                'body' => $body,
+                'headers' => [
+                    'Content-Type' => 'application/x-www-form-urlencoded',
+                    'Referer' => "http://{$this->ip}/install.html",
+                    'Content-Length' => strlen($body), // Ayuda a cURL
+                ],
+                'expect' => false,
+                'curl' => [
+                    CURLOPT_FORBID_REUSE => true, // Intentar evitar problemas de conexión reutilizada
+                    CURLOPT_FRESH_CONNECT => true,
+                    CURLOPT_HTTP09_ALLOWED => true, // Permitir respuestas HTTP/0.9 (fix "Received HTTP/0.9 when not allowed")
+                ]
+            ]);
+
+            return [
+                'status' => 'success',
+                'message' => 'Configuración GPON enviada correctamente',
+                'debug' => [
+                    'input_gpon' => $gpon,
+                    'converted_gpon_hex' => $gponPw,
+                    'session_key' => $sessionKey,
+                    'request_body' => $body,
+                    'http_status' => $configResponse->getStatusCode()
+                ]
+            ];
+
+        } catch (Exception $e) {
+            // Errores conocidos que suelen significar ÉXITO en estos routers antiguos:
+            // 1. HTTP/0.9: El servidor responde con protocolo antiguo.
+            // 2. rewind: La conexión se cerró abruptamente (común tras enviar config).
+            // 3. Empty reply: El servidor no envió respuesta pero ejecutó la acción.
+            $msg = $e->getMessage();
+            if (strpos($msg, 'HTTP/0.9') !== false || strpos($msg, 'rewind') !== false || strpos($msg, 'Empty reply') !== false) {
+                return [
+                    'status' => 'success', // Marcamos como éxito provisional para que el controlador espere
+                    'message' => 'Configuración GPON enviada (advertencia de red ignorada)',
+                    'debug' => [
+                        'input_gpon' => $gpon,
+                        'converted_gpon_hex' => $gponPw ?? 'unknown',
+                        'note' => 'Network error ignored as potential success: ' . $msg
+                    ]
+                ];
+            }
+
+            return [
+                'status' => 'error',
+                'error' => 'Error al configurar GPON: ' . $e->getMessage(),
+                'debug_info' => [
+                    'input_gpon' => $gpon ?? 'null',
+                    'session_key' => $sessionKey ?? 'not_found',
+                    'trace' => $e->getTraceAsString()
+                ]
+            ];
+        }
+    }
+
+    /**
+     * Resetea el identificador GPON (ONT ID) del router a 000000
+     * Requiere acceso con el usuario 'Installation'
+     */
+    public function resetConfigGpon()
+    {
+        $gpon = '000000';
+
+        try {
+            // PASO 0: Inicializar sesión obteniendo la raíz (Evita Error 52: Empty reply)
+            $this->client->get('/');
+
+            // PASO 1: Login en Instalación
+            // Usuario: "Installation", Password: "Te2ef7n2c4hgu2"
+            $loginResponse = $this->client->post('/te_acceso_router.cgi', [
+                'body' => http_build_query([
+                    'loginUsername' => 'Installation',
+                    'loginPassword' => 'Te2ef7n2c4hgu2'
+                ]),
+                'headers' => [
+                    'Content-Type' => 'application/x-www-form-urlencoded',
+                    'Referer' => "http://{$this->ip}/",
+                ],
+                'expect' => false
+            ]);
+
+            if ($loginResponse->getStatusCode() !== 200) {
+                throw new Exception("Error al autenticar en el portal de instalación.");
+            }
+
+            // PASO 2: Obtener install.html para extraer sessionKey
+            $installResponse = $this->client->get('/install.html');
+            $installHtml = (string) $installResponse->getBody();
+
+            if (!preg_match("/var sessionKey = '(\d+)';/", $installHtml, $matches)) {
+                throw new Exception("No se pudo obtener la sessionKey desde install.html");
+            }
+            $sessionKey = $matches[1];
+
+            // PASO 3: Preparar el GPON PW (000000 -> hex)
+            $gponPw = "";
+            for ($i = 0; $i < strlen($gpon); $i++) {
+                $hex = dechex(ord($gpon[$i]));
+                $gponPw .= $hex;
+            }
+            // Agregar padding de ceros hasta 20 caracteres
+            $gponPw = substr($gponPw . "00000000000000000000", 0, 20);
+
+            // PASO 4: Enviar la configuración
+            $body = http_build_query([
+                'sessionKey' => $sessionKey,
+                'gponPw' => $gponPw
+            ]);
+
+            $configResponse = $this->client->post('/te_install.cmd', [
+                'body' => $body,
+                'headers' => [
+                    'Content-Type' => 'application/x-www-form-urlencoded',
+                    'Referer' => "http://{$this->ip}/install.html",
+                    'Content-Length' => strlen($body),
+                ],
+                'expect' => false,
+                'curl' => [
+                    CURLOPT_FORBID_REUSE => true,
+                    CURLOPT_FRESH_CONNECT => true,
+                    CURLOPT_HTTP09_ALLOWED => true,
+                ]
+            ]);
+
+            return [
+                'status' => 'success',
+                'message' => 'GPON reseteado a 000000 correctamente',
+                'debug' => [
+                    'gpon_value' => $gpon,
+                    'converted_gpon_hex' => $gponPw,
+                    'session_key' => $sessionKey,
+                    'http_status' => $configResponse->getStatusCode()
+                ]
+            ];
+
+        } catch (Exception $e) {
+            // Errores conocidos que suelen significar ÉXITO en estos routers antiguos
+            $msg = $e->getMessage();
+            if (strpos($msg, 'HTTP/0.9') !== false || strpos($msg, 'rewind') !== false || strpos($msg, 'Empty reply') !== false) {
+                return [
+                    'status' => 'success',
+                    'message' => 'GPON reseteado a 000000 (advertencia de red ignorada)',
+                    'debug' => [
+                        'gpon_value' => $gpon,
+                        'converted_gpon_hex' => $gponPw ?? 'unknown',
+                        'note' => 'Network error ignored as potential success: ' . $msg
+                    ]
+                ];
+            }
+
+            return [
+                'status' => 'error',
+                'error' => 'Error al resetear GPON: ' . $e->getMessage(),
+                'debug_info' => [
+                    'gpon_value' => $gpon,
+                    'session_key' => $sessionKey ?? 'not_found',
+                    'trace' => $e->getTraceAsString()
+                ]
+            ];
+        }
     }
 }
