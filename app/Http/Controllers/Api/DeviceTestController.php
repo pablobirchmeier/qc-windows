@@ -59,7 +59,7 @@ class DeviceTestController extends Controller
             }
 
             // Si se envía el parámetro gpon, configurar antes de scrapear
-            /*if (!empty($gpon)) {
+            if (!empty($gpon)) {
                 $configResult = $scrapper->configGpon($gpon);
 
                 // Almacenar el resultado de la configuración
@@ -70,7 +70,7 @@ class DeviceTestController extends Controller
                 if ($configResult['status'] === 'success') {
                     sleep(8);
                 }
-            }*/
+            }
 
             // Ejecutar el scraping con retry si hay GPON configurado
             $maxRetries = !empty($gpon) ? 2 : 0;
