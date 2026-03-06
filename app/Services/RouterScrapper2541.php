@@ -52,55 +52,108 @@ class RouterScrapper2541
     public function scrape()
     {
         try {
-            // PASO 1: Obtener página de login
-            // (Esta es una estructura base, los paths y selectores se ajustarán)
-            $loginPageResponse = $this->client->get('/cgi-bin/logIn_mhs.cgi');
+            // PASO 1: Obtener página de login para extraer el SID
+            $loginPageResponse = $this->client->get('/');
             $loginPageHtml = (string) $loginPageResponse->getBody();
 
+            // Extraer potencia óptica si está visible en el login (visto en snippet)
+            // <b>Rx óptica:</b> -16.82 dBm
+            if (preg_match('/Rx óptica:<\/b>\s*([-\d.]+)\s*dBm/i', $loginPageHtml, $matches)) {
+                $this->result['data']['potencia_optica'] = $matches[1] . ' dBm';
+            }
+
             // Extraer el SID: var sid = 'XXXXXXXX';
-            if (preg_match("/var\s+sid\s*=\s*['\"]([a-f0-9]+)['\"]/i", $loginPageHtml, $matches)) {
-                $sid = $matches[1];
-                $this->result['data']['sid'] = $sid;
+            if (!preg_match("/(?:var\s+)?sid\s*=\s*['\"]([a-f0-9]+)['\"]/i", $loginPageHtml, $matches)) {
+                throw new Exception("No se pudo obtener el SID desde la página de login del 2541");
+            }
+            $sid = $matches[1];
+            $this->result['data']['sid'] = $sid;
 
-                // PASO 2: Login
-                $encryptedPassword = md5($this->password . ":" . $sid);
+            // PASO 2: Login
+            // passwd = hex_md5(sid + ":" + password)
+            // string = "user:" + passwd
+            // encodedData = base64.encode(string)
+            $encryptedPassword = md5($sid . ":" . $this->password);
+            $authString = "user:" . $encryptedPassword;
+            $sessionKey = base64_encode($authString);
 
-                $this->client->post('/cgi-bin/logIn_mhs.cgi', [
-                    'form_params' => [
-                        'submitValue' => '1',
-                        'syspasswd'   => $encryptedPassword,
-                        'leaveBlur'   => '0'
-                    ]
-                ]);
+            $loginResponse = $this->client->post('/login-login.cgi', [
+                'form_params' => [
+                    'sessionKey'  => $sessionKey,
+                    'pass'        => '',
+                    'acceptLogin' => 'Entrar'
+                ]
+            ]);
 
-                // PASO 3: Extracción de WiFi 2.4G
-                $wifiResponse = $this->client->get('/cgi-bin/mhs.cgi');
-                $wifiHtml = (string) $wifiResponse->getBody();
-                
-                // Guardar para debug inicial
-                file_put_contents(storage_path('logs/router_2541_debug_24g.html'), $wifiHtml);
+            // PASO 3: Extracción de WiFi 2.4G (/mhs.html)
+            $wifiResponse = $this->client->get('/mhs.html');
+            $wifiHtml = (string) $wifiResponse->getBody();
+            
+            // Guardar para debug
+            file_put_contents(storage_path('logs/router_2541_debug_24g.html'), $wifiHtml);
 
-                if (strpos($wifiHtml, 'SSID') !== false || strpos($wifiHtml, 'ssidname') !== false) {
-                    $this->result['data']['ssid'] = $this->extractInputValue($wifiHtml, 'SSID');
-                    $this->result['data']['wifi_password'] = $this->extractInputValue($wifiHtml, 'WPAPSK_Key');
-                    $this->result['data']['current_channel'] = $this->extractJSVariable($wifiHtml, 'CurrentChannel');
+            $isAuthenticated = (strpos($wifiHtml, 'ssidname') !== false);
+            $this->result['data']['is_authenticated'] = $isAuthenticated ? 'yes' : 'no';
+
+            if ($isAuthenticated) {
+                // SSID: Puede estar en el input o en variables JS (tmp, ssid)
+                $ssid = $this->extractInputValue($wifiHtml, 'ssidname')
+                     ?: $this->extractJSVariable($wifiHtml, 'ssid')
+                     ?: $this->extractJSVariable($wifiHtml, 'tmp');
+                if (!empty($ssid)) {
+                    $this->result['data']['ssid'] = $ssid;
                 }
 
-                // PASO 4: Extracción de WiFi 5G (WiFi Plus)
-                $wifi5gResponse = $this->client->get('/cgi-bin/wifi5g.cgi');
-                $wifi5gHtml = (string) $wifi5gResponse->getBody();
-                
-                // Guardar para debug inicial
-                file_put_contents(storage_path('logs/router_2541_debug_5g.html'), $wifi5gHtml);
-
-                if (strpos($wifi5gHtml, 'SSID') !== false || strpos($wifi5gHtml, 'ssidname') !== false) {
-                    $this->result['data']['ssid_5g'] = $this->extractInputValue($wifi5gHtml, 'SSID');
-                    $this->result['data']['wifi_password_5g'] = $this->extractInputValue($wifi5gHtml, 'WPAPSK_Key');
-                    $this->result['data']['current_channel_5g'] = $this->extractJSVariable($wifi5gHtml, 'CurrentChannel');
+                // Password: En este modelo está en variables JS
+                // var securitypassWPA2="AD8E4A98B941";
+                $wifiPass = $this->extractJSVariable($wifiHtml, 'securitypassWPA2') 
+                         ?: $this->extractJSVariable($wifiHtml, 'securitypassWEP')
+                         ?: $this->extractInputValue($wifiHtml, 'wifiPass');
+                if (!empty($wifiPass)) {
+                    $this->result['data']['wifi_password'] = $wifiPass;
                 }
 
-                // PASO 5: Página de Instalación (ONT/SLID/MAC)
-                if ($this->loginInstallation()) {
+                // Canal: <div class="tabInput black2" id="cur_wifi_channel">11</div>
+                // También está en var CurrentChannel="11";
+                $canal = $this->extractJSVariable($wifiHtml, 'CurrentChannel') 
+                      ?: $this->extractElementContent($wifiHtml, 'cur_wifi_channel');
+                if ($canal !== '') {
+                    $this->result['data']['current_channel'] = $canal;
+                }
+            }
+
+            // PASO 4: Extracción de WiFi 5G (WiFi Plus - /wifi5g.html)
+            $wifi5gResponse = $this->client->get('/wifi5g.html');
+            $wifi5gHtml = (string) $wifi5gResponse->getBody();
+            
+            // Guardar para debug
+            file_put_contents(storage_path('logs/router_2541_debug_5g.html'), $wifi5gHtml);
+
+            if (strpos($wifi5gHtml, 'ssidname') !== false || strpos($wifi5gHtml, 'getSsidName') !== false) {
+                // SSID 5G
+                $ssid5g = $this->extractInputValue($wifi5gHtml, 'ssidname')
+                       ?: $this->extractJSVariable($wifi5gHtml, 'ssid')
+                       ?: $this->extractJSVariable($wifi5gHtml, 'tmp');
+                if (!empty($ssid5g)) {
+                    $this->result['data']['ssid_5g'] = $ssid5g;
+                }
+                
+                $wifiPass5g = $this->extractJSVariable($wifi5gHtml, 'securitypassWPA2') 
+                           ?: $this->extractJSVariable($wifi5gHtml, 'securitypassWEP')
+                           ?: $this->extractInputValue($wifi5gHtml, 'wifiPass');
+                if (!empty($wifiPass5g)) {
+                    $this->result['data']['wifi_password_5g'] = $wifiPass5g;
+                }
+
+                $canal5g = $this->extractJSVariable($wifi5gHtml, 'CurrentChannel') 
+                        ?: $this->extractElementContent($wifi5gHtml, 'cur_wifi_channel');
+                if ($canal5g !== '') {
+                    $this->result['data']['current_channel_5g'] = $canal5g;
+                }
+            }
+
+            // PASO 5: Página de Instalación (ONT/SLID/MAC)
+            if ($this->loginInstallation()) {
                     $ontResponse = $this->client->get('/cgi-bin/Instalacion_ontpw.cgi');
                     $ontHtml = (string) $ontResponse->getBody();
 
@@ -119,7 +172,6 @@ class RouterScrapper2541
                         $this->result['data']['gpon_password'] = $this->hex2ascii($slidHex);
                     }
                 }
-            }
 
             $this->result['status'] = 'success';
 
