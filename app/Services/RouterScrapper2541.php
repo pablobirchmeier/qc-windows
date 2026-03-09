@@ -145,33 +145,44 @@ class RouterScrapper2541
                     $this->result['data']['wifi_password_5g'] = $wifiPass5g;
                 }
 
-                $canal5g = $this->extractJSVariable($wifi5gHtml, 'CurrentChannel') 
+                $canal5g = $this->extractJSVariable($wifi5gHtml, 'CurrentChannel')
                         ?: $this->extractElementContent($wifi5gHtml, 'cur_wifi_channel');
                 if ($canal5g !== '') {
                     $this->result['data']['current_channel_5g'] = $canal5g;
                 }
             }
 
+            // PASO 4.5: Cerrar sesión del login principal antes de ir a Instalación
+            // Si no cerramos sesión, /Instalacion redirige a /mhs.html
+            $this->client->get('/logout.cmd');
+
             // PASO 5: Página de Instalación (ONT/SLID/MAC)
             if ($this->loginInstallation()) {
-                    $ontResponse = $this->client->get('/cgi-bin/Instalacion_ontpw.cgi');
-                    $ontHtml = (string) $ontResponse->getBody();
+                $ontResponse = $this->client->get('/installation_ontpw.html');
+                $ontHtml = (string) $ontResponse->getBody();
 
-                    // Guardar para debug inicial
-                    file_put_contents(storage_path('logs/router_2541_debug_inst.html'), $ontHtml);
+                // Guardar para debug inicial
+                file_put_contents(storage_path('logs/router_2541_debug_inst.html'), $ontHtml);
 
-                    // MAC
-                    if (preg_match('/Direcciones MAC:.*?<br>\s*([A-F0-9:]+)/is', $ontHtml, $m)) {
-                        $this->result['data']['mac_address'] = trim($m[1]);
-                        $this->result['data']['numero_serie'] = trim($m[1]);
-                    }
-
-                    // SLID
-                    $slidHex = $this->extractJSVariable($ontHtml, 'SLIDHexValue');
-                    if ($slidHex !== '') {
-                        $this->result['data']['gpon_password'] = $this->hex2ascii($slidHex);
-                    }
+                // MAC/Número de Serie: <li_p><span class="sub">Direcciones MAC: <br>cc:d4:a1:60:fd:47</span></li_p>
+                if (preg_match('/Direcciones MAC:.*?<br>\s*([a-fA-F0-9:]+)/is', $ontHtml, $m)) {
+                    $mac = trim($m[1]);
+                    $this->result['data']['mac_address'] = $mac;
+                    // Número de serie sin ":" y en mayúsculas → CCD4A160FD47
+                    $this->result['data']['numero_serie'] = strtoupper(str_replace(':', '', $mac));
                 }
+
+                // GPON Password: var gponPassword = '5483613';
+                $gponPassword = $this->extractJSVariable($ontHtml, 'gponPassword');
+                if ($gponPassword !== '' && $gponPassword !== '1234567890') {
+                    $this->result['data']['gpon_password'] = $gponPassword;
+                }
+
+                // SessionKey para configuración GPON (lo guardamos para usarlo después)
+                if (preg_match('/sessionKey\.value\s*=\s*(\d+)/', $ontHtml, $m)) {
+                    $this->result['data']['session_key_gpon'] = $m[1];
+                }
+            }
 
             $this->result['status'] = 'success';
 
@@ -185,27 +196,50 @@ class RouterScrapper2541
 
     /**
      * Configura el identificador GPON (ONT ID) en el router
+     * POST a instalacion.cmd con gponPassword, sessionKey y action
      */
     public function configGpon($gpon)
     {
         try {
+            // Validar formato del GPON (6-10 caracteres)
+            if (strlen($gpon) < 6 || strlen($gpon) > 10) {
+                throw new Exception("El GPON debe tener entre 6 y 10 caracteres.");
+            }
+
+            // Cerrar cualquier sesión previa antes de ir a Instalación
+            $this->client->get('/logout.cmd');
+
             if (!$this->loginInstallation()) {
                 throw new Exception("No se pudo entrar a la página de instalación.");
             }
 
-            $slidHex = $this->ascii2hex($gpon);
+            // Obtener la página para extraer el sessionKey
+            $ontResponse = $this->client->get('/installation_ontpw.html');
+            $ontHtml = (string) $ontResponse->getBody();
 
-            $response = $this->client->post('/cgi-bin/Instalacion_ontpw.cgi', [
+            // Extraer sessionKey: document.ontid.sessionKey.value = 1906789459;
+            $sessionKey = '';
+            if (preg_match('/sessionKey\.value\s*=\s*(\d+)/', $ontHtml, $m)) {
+                $sessionKey = $m[1];
+            }
+
+            // Enviar configuración GPON a instalacion.cmd
+            $response = $this->client->post('/instalacion.cmd', [
                 'form_params' => [
-                    'SLID'        => $slidHex,
-                    'submitValue' => '1',
+                    'gponPassword' => $gpon,
+                    'sessionKey'   => $sessionKey,
+                    'action'       => '0'
                 ]
             ]);
+
+            $responseHtml = (string) $response->getBody();
+            file_put_contents(storage_path('logs/router_2541_config_gpon_response.html'), $responseHtml);
 
             if ($response->getStatusCode() === 200) {
                 return [
                     'status' => 'success',
-                    'message' => 'GPON configurado correctamente.'
+                    'message' => 'GPON configurado correctamente.',
+                    'gpon' => $gpon
                 ];
             }
 
@@ -225,26 +259,45 @@ class RouterScrapper2541
     }
 
     /**
-     * Login en el menú de Instalador
+     * Login en el menú de Instalador (ruta /Instalacion)
+     * Flujo: GET /Instalacion -> extraer SID -> POST login-advance.cgi
      */
     private function loginInstallation(): bool
     {
-        $response = $this->client->get('/cgi-bin/logIn_Instalacion.cgi');
+        // PASO 1: Obtener página de login de instalación para extraer el SID
+        $response = $this->client->get('/Instalacion');
         $html = (string) $response->getBody();
 
+        // Guardar para debug
+        file_put_contents(storage_path('logs/router_2541_login_instalacion.html'), $html);
+
+        // Extraer el SID: var sid = "426d7588";
         if (preg_match("/var\s+sid\s*=\s*['\"]([a-f0-9]+)['\"]/i", $html, $matches)) {
             $sid = $matches[1];
-            $encryptedPass = md5($this->password . ":" . $sid);
 
-            $this->client->post('/cgi-bin/logIn_Instalacion.cgi', [
+            // PASO 2: Calcular credenciales
+            // passwd = hex_md5(sid + ":" + password)
+            // string = "Support:" + passwd
+            // encodedData = base64.encode(string)
+            $encryptedPass = md5($sid . ":" . $this->password);
+            $authString = "Support:" . $encryptedPass;
+            $sessionKey = base64_encode($authString);
+
+            // PASO 3: Enviar login a login-advance.cgi
+            $loginResponse = $this->client->post('/login-advance.cgi', [
                 'form_params' => [
-                    'sysusername' => 'Support',
-                    'syspasswd'   => $encryptedPass,
-                    'submitValue' => '1',
-                    'leaveBlur'   => '0'
+                    'sessionKey' => $sessionKey,
+                    'user'       => '',
+                    'pass'       => ''
                 ]
             ]);
-            return true;
+
+            // Verificar si el login fue exitoso visitando la página de instalación
+            $checkResponse = $this->client->get('/installation_ontpw.html');
+            $checkHtml = (string) $checkResponse->getBody();
+
+            // Si contiene "Identificación ONT" o "gponPassword", el login fue exitoso
+            return (strpos($checkHtml, 'gponPassword') !== false || strpos($checkHtml, 'Identificación ONT') !== false);
         }
         return false;
     }
@@ -269,6 +322,15 @@ class RouterScrapper2541
         $escaped = preg_quote($variableName, '/');
         $pattern = '/(?:var\s+)?' . $escaped . '\s*=\s*[\'"]([^\'"]+)[\'"]\s*;?/i';
         if (preg_match($pattern, $html, $m)) {
+            return trim($m[1]);
+        }
+        return '';
+    }
+
+    private function extractElementContent(string $html, string $elementId): string
+    {
+        $escaped = preg_quote($elementId, '/');
+        if (preg_match('/<[^>]*id=["\']' . $escaped . '["\'][^>]*>([^<]*)</', $html, $m)) {
             return trim($m[1]);
         }
         return '';

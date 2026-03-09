@@ -172,8 +172,10 @@ class RouterScrapper2741
 
                 // Extraer MAC Address: <li><span class="sub">Direcciones MAC: <br>E4:AB:89:0B:AF:B8</span></li>
                 if (preg_match('/Direcciones MAC:.*?<br>\s*([A-F0-9:]+)/is', $ontHtml, $m)) {
-                    $this->result['data']['numero_serie'] = trim($m[1]);
-                    $this->result['data']['mac_address'] = trim($m[1]);
+                    $mac = trim($m[1]);
+                    $this->result['data']['mac_address'] = $mac;
+                    // Número de serie sin ":" y en mayúsculas → E4AB890BAFB8
+                    $this->result['data']['numero_serie'] = strtoupper(str_replace(':', '', $mac));
                 }
 
                 // Extraer SLID (GPON Password) desde SLIDHexValue

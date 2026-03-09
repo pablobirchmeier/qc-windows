@@ -8,6 +8,7 @@ use App\Services\RouterScrapper2541;
 use App\Services\RouterScrapper2741;
 use App\Services\RouterScrapper3505;
 use App\Services\RouterScrapper8115;
+use App\Services\SpeedTestService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
@@ -159,26 +160,74 @@ class DeviceTestController extends Controller
 
     /**
      * Testear conectividad Ethernet e Internet
+     * @param include_speedtest bool - Si true, ejecuta test de velocidad (solo para primer puerto)
      */
     public function testEthernet(Request $request)
     {
-        Log::info("Iniciando test de internet por Ethernet");
-        
+        $includeSpeedtest = filter_var($request->input('include_speedtest', false), FILTER_VALIDATE_BOOLEAN);
+
+        Log::info("Iniciando test de internet por Ethernet" . ($includeSpeedtest ? " con speedtest" : ""));
+
         $networkManager = NetworkManagerFactory::create();
-        
+
         try {
             $result = $networkManager->testInternetConnectivity();
-            
-            return response()->json([
+
+            $response = [
                 'success' => true,
                 'internet_connection' => $result['internet_connection'],
                 'details' => $result
-            ]);
+            ];
+
+            // Si hay conexión a internet y se pidió speedtest, ejecutarlo
+            if ($includeSpeedtest && $result['internet_connection']) {
+                Log::info("Ejecutando speedtest...");
+                $speedTestService = SpeedTestService::getInstance();
+                $speedResult = $speedTestService->runTest();
+                $response['speedtest'] = $speedResult;
+                Log::info("Speedtest completado: " . json_encode($speedResult));
+            }
+
+            return response()->json($response);
         } catch (\Exception $e) {
             Log::error("Error en testEthernet: " . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => "Error en test de ethernet: " . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Ejecutar test de velocidad de internet (speedtest)
+     */
+    public function speedTest(Request $request)
+    {
+        Log::info("Iniciando speedtest independiente");
+
+        try {
+            $speedTestService = SpeedTestService::getInstance();
+
+            // Verificar si está instalado
+            if (!$speedTestService->isSpeedtestInstalled()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'speedtest-cli no está instalado',
+                    'instructions' => $speedTestService->getInstallInstructions()
+                ], 400);
+            }
+
+            $result = $speedTestService->runTest();
+
+            return response()->json([
+                'success' => $result['status'] === 'success',
+                'data' => $result
+            ]);
+        } catch (\Exception $e) {
+            Log::error("Error en speedTest: " . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => "Error en speedtest: " . $e->getMessage()
             ], 500);
         }
     }
