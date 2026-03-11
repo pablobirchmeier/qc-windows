@@ -64,7 +64,7 @@ class DeviceTestController extends Controller
             }
 
             // Si se envía el parámetro gpon, configurar antes de scrapear
-           /* if (!empty($gpon)) {
+            if (!empty($gpon)) {
                 $configResult = $scrapper->configGpon($gpon);
 
                 // Almacenar el resultado de la configuración
@@ -75,7 +75,7 @@ class DeviceTestController extends Controller
                 if ($configResult['status'] === 'success') {
                     sleep(8);
                 }
-            }*/
+            }
 
             // Ejecutar el scraping con retry si hay GPON configurado
             $maxRetries = !empty($gpon) ? 2 : 0;
@@ -546,14 +546,23 @@ class DeviceTestController extends Controller
             'wifi_password' => 'required|string',
             'skip_disable_ethernet' => 'nullable|string',
             'skip_enable_ethernet' => 'nullable|string',
+            'scrape_dbm' => 'nullable|string',
+            'modelo' => 'nullable|string',
+            'password_router' => 'nullable|string',
+            'ip' => 'nullable|string',
         ]);
 
         $ssid = $request->input('ssid');
         $password = $request->input('wifi_password');
         $skipDisableEthernet = filter_var($request->input('skip_disable_ethernet', false), FILTER_VALIDATE_BOOLEAN);
         $skipEnableEthernet = filter_var($request->input('skip_enable_ethernet', false), FILTER_VALIDATE_BOOLEAN);
+        $scrapeDbm = filter_var($request->input('scrape_dbm', false), FILTER_VALIDATE_BOOLEAN);
+        $modelo = $request->input('modelo');
+        $passwordRouter = $request->input('password_router');
+        $ip = $request->input('ip', '192.168.1.1');
+        $username = $request->input('username', 'user');
 
-        return response()->stream(function () use ($ssid, $password, $skipDisableEthernet, $skipEnableEthernet) {
+        return response()->stream(function () use ($ssid, $password, $skipDisableEthernet, $skipEnableEthernet, $scrapeDbm, $modelo, $passwordRouter, $ip, $username) {
             // Desactivar output buffering
             if (ob_get_level()) {
                 ob_end_clean();
@@ -685,6 +694,48 @@ class DeviceTestController extends Controller
 
                 // 5. Enviar resultado final del WiFi
                 $internetOk = $successfulSites > 0;
+                
+                $dbmScraped = null;
+                $dbmError = null;
+
+                if ($scrapeDbm && $internetOk && $modelo && $passwordRouter) {
+                    $this->sendSSEEvent('status', [
+                        'phase' => 'scraping_dbm',
+                        'message' => 'Obteniendo potencia óptica (dBm) por WiFi...'
+                    ]);
+
+                    try {
+                        $scrapper = null;
+                        switch (true) {
+                            case str_contains($modelo, '2741'):
+                                $scrapper = new RouterScrapper2741($ip, $username, $passwordRouter, $modelo);
+                                break;
+                            case str_contains($modelo, '2541'):
+                                $scrapper = new RouterScrapper2541($ip, $username, $passwordRouter, $modelo);
+                                break;
+                            case str_contains($modelo, '3505'):
+                                $scrapper = new RouterScrapper3505($ip, $username, $passwordRouter, $modelo);
+                                break;
+                            case str_contains($modelo, '8115'):
+                                $scrapper = new RouterScrapper8115($ip, $username, $passwordRouter, $modelo);
+                                break;
+                        }
+
+                        if ($scrapper) {
+                            $dbmResult = $scrapper->sacarDbm();
+                            if ($dbmResult['status'] === 'success') {
+                                $dbmScraped = $dbmResult['data']['potencia_optica'] ?? null;
+                            } else {
+                                $dbmError = $dbmResult['error'] ?? 'Error desconocido al obtener DBM';
+                            }
+                        } else {
+                            $dbmError = "Modelo {$modelo} no soportado para sacar DBM";
+                        }
+                    } catch (\Exception $e) {
+                        Log::error("Error extrayendo DBM en WiFi: " . $e->getMessage());
+                        $dbmError = $e->getMessage();
+                    }
+                }
 
                 $this->sendSSEEvent('wifi_result', [
                     'ssid' => $ssid,
@@ -692,7 +743,9 @@ class DeviceTestController extends Controller
                     'internet' => $internetOk,
                     'sites_tested' => count($sites),
                     'sites_successful' => $successfulSites,
-                    'details' => $siteResults
+                    'details' => $siteResults,
+                    'dbm_scraped' => $dbmScraped,
+                    'dbm_error' => $dbmError
                 ]);
 
                 // 6. Limpiar conexión WiFi

@@ -219,6 +219,34 @@ class RouterScrapper2741
     }
 
     /**
+     * Extrae únicamente la potencia óptica (dBm) desde la página de login
+     */
+    public function sacarDbm()
+    {
+        try {
+            $loginPageResponse = $this->client->get('/cgi-bin/logIn_mhs.cgi');
+            $loginPageHtml = (string) $loginPageResponse->getBody();
+
+            // Extraer potencia óptica desde div#rxPower o del texto plano
+            if (preg_match('/id=["\']rxPower["\'][^>]*>.*?([-\d.]+)\s*dBm/s', $loginPageHtml, $matches)) {
+                $this->result['data']['potencia_optica'] = $matches[1] . ' dBm';
+            } elseif (preg_match('/([-\d.]+)\s*dBm/', $loginPageHtml, $matches)) {
+                $this->result['data']['potencia_optica'] = $matches[1] . ' dBm';
+            } else {
+                $this->result['data']['error'] = 'No se encontró la potencia óptica en la página de login';
+            }
+
+            $this->result['status'] = 'success';
+
+        } catch (Exception $e) {
+            $this->result['status'] = 'error';
+            $this->result['error'] = $e->getMessage();
+        }
+
+        return $this->result;
+    }
+
+    /**
      * Extrae el atributo value de un <input> dado su id o name.
      */
     private function extractInputValue(string $html, string $fieldId): string

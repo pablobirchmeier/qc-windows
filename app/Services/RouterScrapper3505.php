@@ -268,6 +268,62 @@ class RouterScrapper3505
     }
 
     /**
+     * Extrae únicamente la potencia óptica (dBm) del router
+     */
+    public function sacarDbm()
+    {
+        try {
+            // Inicializar sesión obteniendo la raíz
+            $this->client->get('/');
+
+            // Login en Instalación
+            try {
+                $this->client->post('/te_acceso_router.cgi', [
+                    'form_params' => [
+                        'loginUsername' => 'Installation',
+                        'loginPassword' => 'Te2ef7n2c4hgu2'
+                    ],
+                    'headers' => [
+                        'Content-Type' => 'application/x-www-form-urlencoded',
+                        'Referer' => "http://{$this->ip}/",
+                    ]
+                ]);
+            } catch (Exception $loginInstallError) {
+                // Continuar aunque dé error, a veces no responde pero sí autentica
+            }
+
+            // Obtener página de instalación (install.html)
+            $installResponse = $this->client->get('/install.html');
+            $installHtml = (string) $installResponse->getBody();
+            
+            $hasInstallAccess = (strpos($installHtml, 'var info = []') !== false);
+            
+            if ($hasInstallAccess) {
+                // Extraer info[6] = Potencia óptica (extraer solo RX)
+                if (preg_match('/info\[6\]\s*=\s*[\'"]([^\'"]+)[\'"]/', $installHtml, $matches)) {
+                    $potencia = trim($matches[1]);
+                    // Formato: "TX:1.942090 dBm;RX:-15.575203 dBm"
+                    if (preg_match('/RX:([-\d.]+)/', $potencia, $rxMatch)) {
+                        $this->result['data']['potencia_optica'] = $rxMatch[1] . ' dBm';
+                    } else {
+                        $this->result['data']['potencia_optica'] = $potencia;
+                    }
+                }
+            } else {
+                $this->result['data']['error'] = 'No se pudo acceder a install.html';
+            }
+
+            $this->result['status'] = 'success';
+
+        } catch (Exception $e) {
+            $this->result['status'] = 'error';
+            $this->result['error'] = $e->getMessage();
+        }
+
+        return $this->result;
+    }
+
+    /**
      * Configura el identificador GPON (ONT ID) en el router
      * Requiere acceso con el usuario 'Installation'
      */

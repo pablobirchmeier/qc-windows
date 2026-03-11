@@ -195,6 +195,31 @@ class RouterScrapper2541
     }
 
     /**
+     * Extrae únicamente la potencia óptica (dBm) desde la página de login
+     */
+    public function sacarDbm()
+    {
+        try {
+            $loginPageResponse = $this->client->get('/');
+            $loginPageHtml = (string) $loginPageResponse->getBody();
+
+            if (preg_match('/Rx óptica:<\/b>\s*([-\d.]+)\s*dBm/i', $loginPageHtml, $matches)) {
+                $this->result['data']['potencia_optica'] = $matches[1] . ' dBm';
+            } else {
+                $this->result['data']['error'] = 'No se encontró la potencia óptica en la página principal';
+            }
+
+            $this->result['status'] = 'success';
+
+        } catch (Exception $e) {
+            $this->result['status'] = 'error';
+            $this->result['error'] = $e->getMessage();
+        }
+
+        return $this->result;
+    }
+
+    /**
      * Configura el identificador GPON (ONT ID) en el router
      * POST a instalacion.cmd con gponPassword, sessionKey y action
      */

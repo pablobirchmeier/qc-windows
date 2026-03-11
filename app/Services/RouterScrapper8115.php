@@ -258,6 +258,32 @@ class RouterScrapper8115
     }
 
     /**
+     * Extrae únicamente la potencia óptica (dBm) directamente desde te_wifi.asp sin hacer login completo
+     */
+    public function sacarDbm()
+    {
+        try {
+            $frameResponse = $this->client->get('/te_wifi.asp');
+            $frameHtml = (string) $frameResponse->getBody();
+
+            if (preg_match('/RX:(-?[\d\.]+)\s*dBm/', $frameHtml, $matches)) {
+                $this->result['data']['rx_optica'] = $matches[1] . ' dBm';
+                $this->result['data']['potencia_optica'] = $matches[1] . ' dBm'; // Agregado también para consistencia con otros modelos
+            } else {
+                $this->result['data']['error'] = 'No se encontró la potencia óptica en te_wifi.asp';
+            }
+
+            $this->result['status'] = 'success';
+
+        } catch (Exception $e) {
+            $this->result['status'] = 'error';
+            $this->result['error'] = $e->getMessage();
+        }
+
+        return $this->result;
+    }
+
+    /**
      * Configura el identificador GPON (ONT ID) en el router
      * Requiere acceso con el usuario 'Support'
      */
