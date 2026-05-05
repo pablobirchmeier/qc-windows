@@ -1,0 +1,276 @@
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link type="text/css" rel="stylesheet" href="/html/mhs/css/style.css">
+<link type="text/css" rel="stylesheet" href="/html/mhs/css/ui.switchbutton.min.css">
+<script type="text/javascript" src="/html/mhs/js/apis/jquery-1.6.3.min.js"></script>
+<script type="text/javascript" src="/html/mhs/js/apis/jquery-ui-1.8.16.custom.min.js"></script>
+<script type="text/javascript" src="/html/mhs/js/apis/jquery.switchbutton.min.js"></script>
+<script type="text/javascript" src="/html/mhs/js/apis/jquery.tmpl.min.js"></script>
+<script type="text/javascript" src="/html/mhs/js/apis/jquery.utils.homestation.min.js"></script>
+<script type="text/javascript" src="/html/mhs/js/main.js"></script>
+<script type="text/javascript" src="/html/mhs/js/networkMap/wifi.js"></script>
+<script type="text/javascript" src="/html/mhs/js/networkMap/applications.js"></script>
+<script type="text/javascript" src="/html/mhs/js/help_window.js"></script>
+<script type="text/javascript" src="/html/mhs/js/page.js"></script>
+<script type="text/javascript" src="/html/mhs/js/passwd.js"></script>
+<script type="text/javascript" src="/html/mhs/js/logout.js"></script>
+<script type="text/javascript" src="/html/mhs/js/jquery.qrcode.min.js"></script>
+<script type="text/javascript">
+	var menuType = 'CHILE';
+	title(menuType);
+</script><title>movistar</title>
+ 
+<script type="text/javascript">
+
+function hex2a(hexx) {
+    var hex = hexx.toString();
+    var str = '';
+    for (var i = 0; i < hex.length; i += 2)
+        str += String.fromCharCode(parseInt(hex.substr(i, 2), 16));
+    return str;
+}
+
+function a2hex(str) {
+	var arr = [];
+	for (var i = 0, l = str.length; i < l; i ++) {
+		var hex = Number(str.charCodeAt(i)).toString(16);
+		hex = hex.substring().toUpperCase();
+		arr.push(hex);
+	}
+	return arr.join('');
+}
+
+function checkRegID() {
+	var regId = document.getElementById("SLID").value;
+
+	/* Check length first */
+	/*Hex input format*/
+/*
+	if (( regId.length != 14 )&&( regId.length != 20 ) && regId.length > 10)
+	{
+		alert( "Formato de identificador invalido.  Debe estar formado por 14 caracteres en hexadecimal." );
+		return false;
+	}
+*/	
+	//Only allow ASCII input format
+	if (regId.length < 6  || regId.length > 10) 
+	{
+		alert( "Formato de identificador invalido.  Debe estar formado por 6 ~ 10 caracteres en cuerda." );
+		return false;
+	}
+	
+	if (regId.length < 21 && regId.length > 10)
+	{
+		if ((regId.length % 2) != 0)
+		{
+			alert( "el tamaño no es el pre-establecido" );
+			return false;
+		}
+
+		var regu = /^[0-9a-fA-F]+$/;
+		if (regu.test(regId))
+		{
+			while (regId.length < 20)
+			{
+				regId += "0";
+			}
+
+			document.getElementById("SLID").value=regId.substring().toUpperCase();
+			return true;
+		}
+		else
+		{
+			alert( "Error: Formato incorrecto de GPON Password, introduzca el valor HEX correcto" );
+			return false;
+		}
+	}
+	else if (regId.length < 11) //ASCII to HEX and save
+	{
+		var hexpwd = a2hex(regId);
+		var regu = /^[0-9a-fA-F]+$/;
+		if (regu.test(hexpwd))
+		{
+			while (hexpwd.length < 20)
+			{
+				hexpwd += "0";
+			}
+			document.getElementById("SLID").value=hexpwd.substring().toUpperCase();
+			return true;
+		}
+		else
+		{
+			alert( "Error: Formato incorrecto de GPON Password, entrada valor ascii correcto" );
+			return false;
+		}
+	}
+	else
+	{
+		alert( "Error: Formato incorrecto de GPON Password, por favor ingrese el valor correcto" );
+		return false;
+	}
+}
+
+function checkMyForm(myForm) {
+	if( checkRegID() ) 
+	{
+		document.getElementById("SLID").disabled = false;
+		document.getElementById("submitValue").value = "1";
+		loadingProcess();
+		return true;
+	} 
+	else 
+	{
+		return false;
+	}
+}
+</script>
+</head>
+
+
+
+<body>
+
+
+
+<!--wrapper-->
+<div class="wrapper" id="cont">
+    <!--top-->
+    <div class="topBorder">
+		<div class="top_LLBox">
+			<div id="home"><img src="/html/mhs/img/meun.png" width="45" height="45"></div>
+			<div id="menu" class="toptitle2">MENÚ</div>
+			<div id="pagemenu" class="menuList">
+				<ul>
+					<li><a href="/cgi-bin/Instalacion_ontpw.cgi">Identificación ONT</a></li>
+					<li><a href="/cgi-bin/Instalacion.cgi">Selección del servicio</a></li>
+					<li><a href="https://192.168.1.1:8000/">Management</a></li>
+				</ul>
+			</div><!--pagemenu-->
+		</div><!--top_LLBox-->
+        <div class="top_CBox toptitleCL">Acceso al Configurador Router</div>
+        <div class="top_RRBox logoBox_in"><img src="/html/mhs/img/logo.png"></div>
+    </div>
+    <!--top END-->
+    <!--stlye_mins-->
+	<div class="topBorder2">
+        <div class="toptitle2">Acceso al Configurador Router</div>
+	</div>
+    <!--stlye_mins end-->
+ 	<div class="mainBorder"><div class="items"><a href="javascript:void(0)" onclick="logoutBtu();">Cerrar sesión</a></div></div>
+    <!--MAIN-->
+	<div class="mainBorder">
+		<div id="logout" class="finBox">
+    		<div class="artBox">¿Está seguro de que desea cerrar la sesión?<br>
+            </div>
+            <div class="artBox">
+              	<div class="leftBtu"><input name="button" id="button" value="Cancelar" class="checkBtu" onclick="closeDiv();" type="button"></div>
+              	<div class="rightBtu"><input name="button" id="button" value="Aceptar" class="checkBtu" onclick="javascript:location.href='/cgi-bin/Logout.cgi'" type="button"></div>
+            </div>
+    	</div>
+		<br>
+		<br>
+    	<!--top_info m' l pc-->
+    	<div class="top_info">
+			<ul>
+            	<li><span class="sub">Fabricante: <br>Mitrastar</span></li>
+                <li><span class="sub">Modelo: <br>GPT-2841GX4X5-SV</span></li>
+                <li><span class="sub">Firmware: <br>GL_g2.11_100XNQ0b21</span></li>
+				<li style="display:none" id="connect"><span class="sub">Router: <br>Conectado a Internet </span></li>	
+				<li style="" id="disconnect"><span class="sub">Router: <br>Sin conexión a Internet </span></li>
+                <li><span class="sub">Nº serie del equipo: <br>MSTC8CAD6C26</span></li>
+                <li><span class="sub">Direcciones MAC: <br>2C:96:82:31:48:B8</span></li>
+                <li><span class="sub">Potencia óptica recibida[dBm]: <br>-40.00</span></li>
+                <li><span class="sub">Potencia óptica transmitida por la OLT[dBm]: <br>No Disponible</span></li>
+				<li><span class="sub">Información adicional:
+						<br>0/00/00/00/0
+					</span>
+				</li>
+            </ul>
+    	</div>
+    	<!--top_info m' l pc END-->
+     	<!--top_info m' l pc-->
+    	<div class="top_info_S">
+	    	<div id="hoverItems" class="itemsB"><a href="#">Tu equipo&nbsp;&gt;</a>
+	        	<ul style="display: none;">
+	            	<li><span class="sub">Fabricante: <br>Mitrastar</span></li>
+	                <li><span class="sub">Modelo: <br>GPT-2541GNAC</span></li>
+	                <li><span class="sub">Firmware: <br>CL_g001_100VNP0b20</span></li>
+					<li style="display:none" id="connect"><span class="sub">Router: <br>Conectado a Internet </span></li>	
+					<li style="display:none" id="disconnect"><span class="sub">Router: <br>Sin conexión a Internet </span></li>             
+	                <li><span class="sub">Nº serie del equipo: <br>MSTC12345678</span></li>
+	                <li><span class="sub">Direcciones MAC: <br>00:10:18:01:00:01</span></li>
+	                <li><span class="sub">Potencia óptica recibida[dBm]: <br>0</span></li>
+	                <li><span class="sub">Potencia óptica transmitida por la OLT[dBm]: <br>No Disponible</span></li>
+					<li><span class="sub">CC Información adicional:
+							<br>0/00/00/00/0
+						</span>
+					</li>
+	            </ul>
+	        </div>
+	      	<div class="itemsB"><a href="javascript:void(0)" class="white" onclick="logoutBtu();">Cerrar sesión</a></div>
+	    </div>
+    	<!--top_info m' l pc END-->
+	    <!--location-->
+	    <div class="locationTitle">Identificación ONT</div>
+	    <!--location end-->
+		<form id="form1" name="form1" method="post" action="Instalacion_ontpw.cgi" onsubmit="return checkMyForm(this);" autocomplete="off">
+		   	<div class="artBox black2">Introduce el identificador de la ONT y pulsa el botón “Aceptar”. Al pulsal "Aceptar" se producirá la configuración remota del equipo. Esta operación puede llevar unos minutos y es posible que se produzca el reinicio del equipo.</div>
+	  		<div class="artBox">
+
+	 			<div class="tabInput"><input name="SLID" id="SLID" value="" type="text" class="txtBox black"></div>
+				<div class="tabID"><input type="submit" name="Submit" value="Aceptar" class="sendBtu2"></div>
+
+
+				<input type="hidden" name="submitValue" id="submitValue">
+			</div>
+	        <div class="artBox">
+	        	<div class="u15">
+	        	<span class="sub">Atención:</span> Es necesario tener el cable óptico desconectado del equipo para introducir el identificador de la ONT.<br>
+	   	    	La incorrecta introducción  de este identificador puede ocasionar la pérdida del servicio.</div>
+	        </div>
+		</form>  
+	</div>
+	<!--main END-->
+    <!--footer-->
+    <div class="footerBorder">
+        <div class="logo"></div>
+        <ul>
+            <li class="first">© Telefónica de Chile, S.A. Todos los derechos reservados. </li>
+            <li>2.0</li>
+        </ul>
+    </div>
+    <!--footer END-->
+</div>
+<!--wrapper END-->
+<script type="text/javascript">
+	var internet = '';
+	if( internet == "1" )
+	{
+		document.getElementById("connect").style.display = "";
+		document.getElementById("disconnect").style.display = "none";
+	}
+	else
+	{
+		document.getElementById("disconnect").style.display = "";
+		document.getElementById("connect").style.display = "none";
+	}
+
+	var SLIDHexValue = '36313335393533000000'
+	
+	if(SLIDHexValue != "31323334353637383930") //ASCII:1234567890 (Default)
+	{
+		var str = SLIDHexValue.toString();
+		document.getElementById("SLID").value = str.substring();
+	}
+</script>
+
+
+
+
+
+
+
+
+
+</body></html>

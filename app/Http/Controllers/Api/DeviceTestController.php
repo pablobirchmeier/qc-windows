@@ -6,8 +6,12 @@ use App\Http\Controllers\Controller;
 use App\Services\NetworkManagerFactory;
 use App\Services\RouterScrapper2541;
 use App\Services\RouterScrapper2741;
+use App\Services\RouterScrapper2742;
+use App\Services\RouterScrapper2841;
 use App\Services\RouterScrapper3505;
+use App\Services\RouterScrapper3507;
 use App\Services\RouterScrapper8115;
+use App\Services\RouterScrapper8225;
 use App\Services\SpeedTestService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -44,14 +48,26 @@ class DeviceTestController extends Controller
                 case str_contains($modelo, '2741'):
                     $scrapper = new RouterScrapper2741($ip, $username, $password, $modelo);
                     break;
+                case str_contains($modelo, '2742'):
+                    $scrapper = new RouterScrapper2742($ip, $username, $password, $modelo);
+                    break;
+                case str_contains($modelo, '2841'):
+                    $scrapper = new RouterScrapper2841($ip, $username, $password, $modelo);
+                    break;
                 case str_contains($modelo, '2541'):
                     $scrapper = new RouterScrapper2541($ip, $username, $password, $modelo);
                     break;
                 case str_contains($modelo, '3505'):
                     $scrapper = new RouterScrapper3505($ip, $username, $password, $modelo);
                     break;
+                case str_contains($modelo, '3507'):
+                    $scrapper = new RouterScrapper3507($ip, $username, $password, $modelo);
+                    break;
                 case str_contains($modelo, '8115'):
                     $scrapper = new RouterScrapper8115($ip, $username, $password, $modelo);
+                    break;
+                case str_contains($modelo, '8225'):
+                    $scrapper = new RouterScrapper8225($ip, $username, $password, $modelo);
                     break;
                 // case str_contains($modelo, 'XXXX'):
                 //     $scrapper = new RouterScrapperXXXX($ip, $username, $password, $modelo);
@@ -103,14 +119,26 @@ class DeviceTestController extends Controller
                         case str_contains($modelo, '2741'):
                             $scrapper = new RouterScrapper2741($ip, $username, $password, $modelo);
                             break;
+                        case str_contains($modelo, '2742'):
+                            $scrapper = new RouterScrapper2742($ip, $username, $password, $modelo);
+                            break;
+                        case str_contains($modelo, '2841'):
+                            $scrapper = new RouterScrapper2841($ip, $username, $password, $modelo);
+                            break;
                         case str_contains($modelo, '2541'):
                             $scrapper = new RouterScrapper2541($ip, $username, $password, $modelo);
                             break;
                         case str_contains($modelo, '3505'):
                             $scrapper = new RouterScrapper3505($ip, $username, $password, $modelo);
                             break;
+                        case str_contains($modelo, '3507'):
+                            $scrapper = new RouterScrapper3507($ip, $username, $password, $modelo);
+                            break;
                         case str_contains($modelo, '8115'):
                             $scrapper = new RouterScrapper8115($ip, $username, $password, $modelo);
+                            break;
+                        case str_contains($modelo, '8225'):
+                            $scrapper = new RouterScrapper8225($ip, $username, $password, $modelo);
                             break;
                     }
                 }
@@ -403,14 +431,26 @@ class DeviceTestController extends Controller
                 case str_contains($modelo, '2741'):
                     $scrapper = new RouterScrapper2741($ip, $username, $password, $modelo);
                     break;
+                case str_contains($modelo, '2742'):
+                    $scrapper = new RouterScrapper2742($ip, $username, $password, $modelo);
+                    break;
+                case str_contains($modelo, '2841'):
+                    $scrapper = new RouterScrapper2841($ip, $username, $password, $modelo);
+                    break;
                 case str_contains($modelo, '2541'):
                     $scrapper = new RouterScrapper2541($ip, $username, $password, $modelo);
                     break;
                 case str_contains($modelo, '3505'):
                     $scrapper = new RouterScrapper3505($ip, $username, $password, $modelo);
                     break;
+                case str_contains($modelo, '3507'):
+                    $scrapper = new RouterScrapper3507($ip, $username, $password, $modelo);
+                    break;
                 case str_contains($modelo, '8115'):
                     $scrapper = new RouterScrapper8115($ip, $username, $password, $modelo);
+                    break;
+                case str_contains($modelo, '8225'):
+                    $scrapper = new RouterScrapper8225($ip, $username, $password, $modelo);
                     break;
                 default:
                     return response()->json([
@@ -467,14 +507,26 @@ class DeviceTestController extends Controller
                 case str_contains($modelo, '2741'):
                     $scrapper = new RouterScrapper2741($ip, $username, $password, $modelo);
                     break;
+                case str_contains($modelo, '2742'):
+                    $scrapper = new RouterScrapper2742($ip, $username, $password, $modelo);
+                    break;
+                case str_contains($modelo, '2841'):
+                    $scrapper = new RouterScrapper2841($ip, $username, $password, $modelo);
+                    break;
                 case str_contains($modelo, '2541'):
                     $scrapper = new RouterScrapper2541($ip, $username, $password, $modelo);
                     break;
                 case str_contains($modelo, '3505'):
                     $scrapper = new RouterScrapper3505($ip, $username, $password, $modelo);
                     break;
+                case str_contains($modelo, '3507'):
+                    $scrapper = new RouterScrapper3507($ip, $username, $password, $modelo);
+                    break;
                 case str_contains($modelo, '8115'):
                     $scrapper = new RouterScrapper8115($ip, $username, $password, $modelo);
+                    break;
+                case str_contains($modelo, '8225'):
+                    $scrapper = new RouterScrapper8225($ip, $username, $password, $modelo);
                     break;
                 default:
                     return response()->json([
@@ -710,14 +762,26 @@ class DeviceTestController extends Controller
                             case str_contains($modelo, '2741'):
                                 $scrapper = new RouterScrapper2741($ip, $username, $passwordRouter, $modelo);
                                 break;
+                            case str_contains($modelo, '2742'):
+                                $scrapper = new RouterScrapper2742($ip, $username, $passwordRouter, $modelo);
+                                break;
+                            case str_contains($modelo, '2841'):
+                                $scrapper = new RouterScrapper2841($ip, $username, $passwordRouter, $modelo);
+                                break;
                             case str_contains($modelo, '2541'):
                                 $scrapper = new RouterScrapper2541($ip, $username, $passwordRouter, $modelo);
                                 break;
                             case str_contains($modelo, '3505'):
                                 $scrapper = new RouterScrapper3505($ip, $username, $passwordRouter, $modelo);
                                 break;
+                            case str_contains($modelo, '3507'):
+                                $scrapper = new RouterScrapper3507($ip, $username, $passwordRouter, $modelo);
+                                break;
                             case str_contains($modelo, '8115'):
                                 $scrapper = new RouterScrapper8115($ip, $username, $passwordRouter, $modelo);
+                                break;
+                            case str_contains($modelo, '8225'):
+                                $scrapper = new RouterScrapper8225($ip, $username, $passwordRouter, $modelo);
                                 break;
                         }
 
