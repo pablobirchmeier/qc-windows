@@ -49,7 +49,9 @@ $.ajaxSetup({
 
 
 
-            <div class="top_RBox toptitle">Router Smart WiFi 6</div>
+
+			<div class="top_RBox toptitle">ROUTER WIFI 6 PLUS</div>
+
   
 
 	</div>
@@ -123,34 +125,55 @@ $.ajaxSetup({
 			<input name="leaveBlur" id="leaveBlur" type="hidden" value="0">
 			<input name="Submit" type="submit" id="Submit" class="sendBtu" value="Entrar">
 		</div>
+		<div class="artBox" id="rxPower">
+			<ul><li><div class="tabID">Rx óptica:</div><span id="rxPowerValue">-22.44
+</span> dBm</li>
+				<li><div class="tabID">Modelo:</div>GPT-2742GX4X5v6</li>
+				<li><div class="tabID">Firmware:</div>GL_g2.5_100XNT0b23_2</li>
+				<li><div class="tabID">MAC:</div>443B148D3359</li>
+			</ul>
+		</div>
         <div class="artBox">
 
 
 
-            <div class="sampleImg4"></div>
+
+            <div class="sampleImg_GPT2742GX4X5v6"></div>
+
           
         </div>
 	</form>
 	</div>
     <!--main END-->
-    
+    <!--Enable RX power at Login screen  start-->    
+	<script type="text/javascript">
+		var menuType = 'CHILE';
+		if( (menuType=="PERU") || (menuType=="ARGENTINA") || (menuType=="CHILE") || (menuType=="COLOMBIA") ){
+			document.getElementById("rxPower").style.display="";
+		}
+		else{
+			document.getElementById("rxPower").style.display="none";
+		}
+	</script>    
+	<!--Enable RX power end-->
 
 <!--footer start-->
-    <div class="footerBorder">
-        <div class="logo"></div>
-        <ul>
-            <li class="first">
 <script type="text/javascript">
 	var menuType = 'CHILE';
-	footer(menuType);
+	footerBorder(menuType);
+</script><div class="footerBorder">
+<div class="logo"></div>
+<ul>
+<li class="first">
+<script type="text/javascript">
+footer(menuType);
 </script>© Telefónica de Chile, S.A. Todos los derechos reservados.
 
-            </li>
+</li>
+<li>2.0</li>
+</ul>
+</div>
 
-            <li>2.0</li>
-
-        </ul>
-    </div>
  <!--footer End-->   
  </div></div>
 	<!--wrapper&wrapper2end-->
@@ -316,7 +339,7 @@ function uiApply()
 		{
 			//session key
 			//document.getElementById("syspasswd").value = encode(session_key, passwd);
-			var sid = '3425fc1d';
+			var sid = '37a7fec5';
 			document.getElementById("syspasswd").value = hex_md5(passwd+":"+sid);
 			document.getElementById("syspasswd_1").value = "";
 			document.getElementById("submitValue").value = "1";
@@ -324,6 +347,19 @@ function uiApply()
 			return true;
 		}
 }
+function updateRxpower()
+{
+	$('#rxPowerValue').load('/cgi-bin/updateGponRxpower.cgi');
+}
+
+$(document).ready(function() {
+	var menuType = 'CHILE';
+	if( (menuType=="PERU") || (menuType=="ARGENTINA") || (menuType=="CHILE") || (menuType=="COLOMBIA") ){
+		// For HISPAM, update gpon rx power every 10 seconds
+		setInterval("updateRxpower();",10000);
+	}
+});
+
 </script>
 
 

@@ -67,9 +67,7 @@ class RouterScrapper2742
 
             // Extraer MAC desde la página de login: <li><div class="tabID">MAC:</div>XXXXXXXXXXXX</li>
             if (preg_match('/tabID["\']?>MAC:<\/div>\s*([A-Fa-f0-9]{12})/s', $loginPageHtml, $matches)) {
-                $rawMac = strtoupper($matches[1]);
-                // Formatear como XX:XX:XX:XX:XX:XX
-                $this->result['data']['mac_address'] = implode(':', str_split($rawMac, 2));
+                $this->result['data']['mac_address'] = strtoupper($matches[1]);
             }
 
             // Extraer Modelo desde la página de login
@@ -180,19 +178,11 @@ class RouterScrapper2742
                 // Ir a la página de ONT/SLID (/cgi-bin/Instalacion_ontpw.cgi)
                 $ontResponse = $this->client->get('/cgi-bin/Instalacion_ontpw.cgi');
                 $ontHtml = (string) $ontResponse->getBody();
-
                 // Guardar para debug
                 file_put_contents(storage_path('logs/router_2742_inst_debug.html'), $ontHtml);
-
-                // Extraer MAC Address: <span class="sub">Direcciones MAC: <br>XX:XX:XX:XX:XX:XX</span>
-                if (preg_match('/Direcciones MAC:.*?<br>\s*([A-Fa-f0-9:]+)/is', $ontHtml, $m)) {
-                    $mac = trim($m[1]);
-                    $this->result['data']['mac_address'] = $mac;
-                }
-
                 // Número de serie = MAC sin los ":"
                 if (!empty($this->result['data']['mac_address'])) {
-                    $this->result['data']['numero_serie'] = str_replace(':', '', $this->result['data']['mac_address']);
+                    $this->result['data']['numero_serie'] = $this->result['data']['mac_address'];
                 }
 
                 // Extraer SLID (GPON Password) desde SLIDHexValue

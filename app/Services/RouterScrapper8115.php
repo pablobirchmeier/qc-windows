@@ -66,6 +66,142 @@ class RouterScrapper8115
     }
 
     /**
+     * Lista de campos críticos que se esperan de la página de instalación.
+     * Si después del scrape primario falta alguno, dispara el fallback.
+     */
+    private function getMissingInstalacionFields(): array
+    {
+        $criticos = ['fabricante', 'modelo_equipo', 'firmware', 'numero_serie', 'mac_address'];
+        $missing = [];
+        foreach ($criticos as $field) {
+            $val = $this->result['data'][$field] ?? null;
+            if (empty($val)) {
+                $missing[] = $field;
+            }
+        }
+        return $missing;
+    }
+
+    /**
+     * FALLBACK: Variante de firmware donde el login del usuario "Support" no funciona.
+     *
+     * En este firmware, la página de instalación se sirve directamente bajo /instalacion
+     * (sin login previo) y el HTML usa una <table class="routerinfo"> con celdas tipo:
+     *   <td><b>Fabricante:&nbsp;</b>Askey</td>
+     *   <td><b>Modelo:&nbsp;</b>RTF8115VW</td>
+     *   <td><b>Firmware:&nbsp;</b>CL_g12.6_RTF_...</td>
+     *   <td><b>Router:&nbsp;</b>Internet está sin configurar</td>
+     *   <td><b>Nº serie del equipo:&nbsp;</b>4CABF8CEFC01</td>
+     *   <td><b>Dirección MAC:&nbsp;</b>4C:AB:F8:CE:FC:00</td>
+     *   <td><b>Potencia óptica recibida [dBm]:&nbsp;</b>-20.360</td>
+     *
+     * Solo escribe campos que faltan; no pisa valores que el primario logró extraer.
+     */
+    private function scrapeInstalacionFallback(array $missingFields): void
+    {
+        try {
+            // En el firmware variante, el flujo es:
+            //   1) login con usuario "user" (NO "Support") en /
+            //   2) estando logueado, pedir /instalacion → redirige a /index_instalacion.asp
+            //      → su frame interno /me_install.asp TRAE LA INFO porque la sesión "user"
+            //      tiene permisos en este firmware (a diferencia del original).
+            //
+            // El primario rompió la sesión al intentar login con "Support" (que falla en
+            // este firmware), entonces re-logueamos con "user" antes de pedir /instalacion.
+            $transformedUser = $this->mess_userpass('user');
+            $transformedPass = $this->mess_userpass($this->password);
+            $this->client->post('/cgi-bin/te_acceso_router.cgi', [
+                'form_params' => [
+                    'curWebPage' => '/te_wifi.asp',
+                    'loginUsername' => $transformedUser,
+                    'loginPassword' => $transformedPass,
+                ],
+            ]);
+            $this->client->get('/instalacion', ['allow_redirects' => true]);
+            $resp = $this->client->get('/me_install.asp');
+            $html = (string) $resp->getBody();
+            $statusCode = $resp->getStatusCode();
+
+            $this->result['data']['fallback_instalacion_status_code'] = $statusCode;
+
+            if (empty($html)) {
+                $this->result['data']['fallback_instalacion_error'] = 'HTML vacío';
+                return;
+            }
+
+            // Guardar HTML del fallback para debug si hace falta
+            $debugFile = storage_path('app/fallback_instalacion_' . time() . '.html');
+            @file_put_contents($debugFile, $html);
+            $this->result['data']['fallback_instalacion_html_file'] = $debugFile;
+
+            // El firmware variante usa la MISMA estructura info[0]..info[6] que el original,
+            // solo que los valores se inyectan via JS en celdas que estáticamente vienen
+            // vacías. Los regex son los mismos que usa el primario en /me_install.asp.
+            $extracted = [];
+            $infoFieldMap = [
+                0 => 'fabricante',
+                1 => 'modelo_equipo',
+                2 => 'firmware',
+                // 3 es status — se trata aparte (mapea '4'/'Connected' a texto descriptivo)
+                4 => 'numero_serie',
+                5 => 'mac_address',
+            ];
+            foreach ($infoFieldMap as $idx => $field) {
+                $regex = '/info\[' . $idx . '\]\s*=\s*[\'"]([^\'"]+)[\'"]/';
+                if (preg_match($regex, $html, $m)) {
+                    $val = trim($m[1]);
+                    if ($val !== '') {
+                        $extracted[$field] = $val;
+                    }
+                }
+            }
+
+            // Estado del router (info[3]): 'Connected' = configurado, otro valor = sin configurar.
+            if (preg_match('/info\[3\]\s*=\s*[\'"]([^\'"]+)[\'"]/', $html, $m)) {
+                $extracted['router_status'] = trim($m[1]) === 'Connected'
+                    ? 'Internet en operación'
+                    : 'Internet está sin configurar';
+            }
+
+            // Potencia óptica (info[6]): formato "TX:-40.000000 dBm;RX:-20.260000 dBm;LT:...".
+            // Nos interesa RX (lo que recibe el ONT desde la OLT). Guardamos en
+            // `potencia_optica` (nombre canónico usado por todos los scrappers) y
+            // también en `rx_optica` para consistencia con el primario del 8115.
+            // Si el router está sin fibra, RX = -40.000000 ("LOS"). Guardamos el valor
+            // tal cual (no filtramos) para que el operador vea que no hay señal.
+            if (preg_match('/info\[6\]\s*=\s*[\'"]([^\'"]+)[\'"]/', $html, $m)) {
+                if (preg_match('/RX:(-?[\d.]+)/', $m[1], $rxMatch)) {
+                    $formatted = number_format((float) $rxMatch[1], 3) . ' dBm';
+                    $extracted['potencia_optica'] = $formatted;
+                    $extracted['rx_optica'] = $formatted;
+                }
+            }
+
+            // GPON password (var gponPw): mismo regex que usa el primario.
+            if (preg_match('/var gponPw\s*=\s*[\'"]([^\'"]*)[\'"]/', $html, $m)) {
+                $gponPw = trim($m[1]);
+                if ($gponPw !== '') {
+                    $extracted['gpon_password'] = $gponPw;
+                }
+            }
+
+            // Solo escribir campos que estaban faltando (o que vinieron vacíos del primario)
+            $written = [];
+            foreach ($extracted as $field => $val) {
+                $current = $this->result['data'][$field] ?? null;
+                if (empty($current)) {
+                    $this->result['data'][$field] = $val;
+                    $written[] = $field;
+                }
+            }
+
+            $this->result['data']['fallback_instalacion_written'] = $written;
+        } catch (Exception $e) {
+            $this->result['data']['fallback_instalacion_error'] = $e->getMessage();
+        }
+    }
+
+    /**
      * Ejecuta el scraping del router
      */
     public function scrape()
@@ -239,10 +375,35 @@ class RouterScrapper8115
                     $this->result['data']['mac_address'] = trim($matches[1]);
                 }
 
+                // Extraer Potencia óptica (info[6]): formato "TX:X dBm;RX:Y dBm;LT:Z dBm;LR:W dBm".
+                // En el firmware Askey, /te_wifi.asp no expone el RX en formato regex `RX:-X dBm`,
+                // por eso lo sacamos de aquí. Guardamos en `potencia_optica` (canónico) y
+                // `rx_optica` (compat con extraído anteriormente del te_wifi.asp).
+                if (preg_match('/info\[6\]\s*=\s*[\'"]([^\'"]+)[\'"]/', $authInstalacionHtml, $matches)) {
+                    if (preg_match('/RX:(-?[\d.]+)/', $matches[1], $rxMatch)) {
+                        $formatted = number_format((float) $rxMatch[1], 3) . ' dBm';
+                        $this->result['data']['potencia_optica'] = $formatted;
+                        $this->result['data']['rx_optica'] = $formatted;
+                    }
+                }
+
                 // Extraer GPON Password
                 if (preg_match('/var gponPw\s*=\s*[\'"]([^\'"]*)[\'"]/', $authInstalacionHtml, $matches)) {
                     $this->result['data']['gpon_password'] = trim($matches[1]);
                 }
+            }
+
+            // FALLBACK: Variante de firmware que NO acepta login con usuario "Support".
+            // En ese firmware, la URL /instalacion devuelve el HTML completo sin
+            // pedir login. La estructura del HTML es distinta: en vez de info[0]..info[5]
+            // tipo JavaScript, los datos vienen en una <table class="routerinfo"> con
+            // <b>Etiqueta:&nbsp;</b>Valor en cada <td>. Detectamos que estamos en este
+            // firmware porque después del login primario faltan los campos críticos.
+            $criticalMissing = $this->getMissingInstalacionFields();
+            if (!empty($criticalMissing)) {
+                $this->result['data']['fallback_instalacion_used'] = true;
+                $this->result['data']['fallback_instalacion_missing_before'] = $criticalMissing;
+                $this->scrapeInstalacionFallback($criticalMissing);
             }
 
             // Si llegamos aquí, todo salió bien
@@ -270,7 +431,35 @@ class RouterScrapper8115
                 $this->result['data']['rx_optica'] = $matches[1] . ' dBm';
                 $this->result['data']['potencia_optica'] = $matches[1] . ' dBm'; // Agregado también para consistencia con otros modelos
             } else {
-                $this->result['data']['error'] = 'No se encontró la potencia óptica en te_wifi.asp';
+                // FALLBACK firmware variante: /te_wifi.asp no expone el RX. Usamos
+                // el mismo truco que el scrape (login user → /instalacion → /me_install.asp)
+                // y extraemos de info[6] el valor "RX:-XX.XXXXXX dBm".
+                try {
+                    $transformedUser = $this->mess_userpass('user');
+                    $transformedPass = $this->mess_userpass($this->password);
+                    $this->client->post('/cgi-bin/te_acceso_router.cgi', [
+                        'form_params' => [
+                            'curWebPage' => '/te_wifi.asp',
+                            'loginUsername' => $transformedUser,
+                            'loginPassword' => $transformedPass,
+                        ],
+                    ]);
+                    $this->client->get('/instalacion', ['allow_redirects' => true]);
+                    $html = (string) $this->client->get('/me_install.asp')->getBody();
+                    if (preg_match('/info\[6\]\s*=\s*[\'"]([^\'"]+)[\'"]/', $html, $m6)
+                        && preg_match('/RX:(-?[\d.]+)/', $m6[1], $rxMatch)) {
+                        $formatted = number_format((float) $rxMatch[1], 3) . ' dBm';
+                        $this->result['data']['rx_optica'] = $formatted;
+                        $this->result['data']['potencia_optica'] = $formatted;
+                        $this->result['data']['dbm_via_fallback'] = true;
+                    }
+                } catch (Exception $eFallback) {
+                    // Si el fallback también falla, lo reportamos abajo
+                }
+
+                if (empty($this->result['data']['potencia_optica'])) {
+                    $this->result['data']['error'] = 'No se encontró la potencia óptica ni en te_wifi.asp ni en /me_install.asp';
+                }
             }
 
             $this->result['status'] = 'success';
@@ -284,39 +473,67 @@ class RouterScrapper8115
     }
 
     /**
-     * Configura el identificador GPON (ONT ID) en el router
-     * Requiere acceso con el usuario 'Support'
+     * Configura el identificador GPON (ONT ID) en el router.
+     *
+     * Soporta dos firmwares:
+     *  - Original: login con usuario "Support" en /me_install.asp.
+     *  - Variante: el login con "Support" NO funciona; hay que loguear con "user"
+     *    y pedir /instalacion (que redirige a /index_instalacion.asp y carga
+     *    /me_install.asp con la sesión "user" activa, exponiendo la sessionKey).
+     *
+     * El POST a /cgi-bin/te_install.cmd con la sessionKey es idéntico en ambos.
      */
     public function configGpon($gpon)
     {
+        $sessionKey = null;
+        $loginMethod = null;
+
         try {
-            // PASO 1: Obtener página inicial para establecer sesión
-            $this->client->get('/index_instalacion.asp');
-
-            // PASO 2: Login en instalación con usuario "Support"
-            $transformedUsernameSupport = $this->mess_userpass('Support');
-            $transformedPasswordSupport = $this->mess_userpass($this->password);
-
-            $loginResponse = $this->client->post('/cgi-bin/te_acceso_router.cgi', [
-                'form_params' => [
-                    'curWebPage' => '/me_install.asp',
-                    'loginUsername' => $transformedUsernameSupport,
-                    'loginPassword' => $transformedPasswordSupport
-                ]
-            ]);
-
-            if ($loginResponse->getStatusCode() !== 200) {
-                throw new Exception("Error al autenticar en el portal de instalación.");
+            // INTENTO 1 (legacy): login con "Support".
+            try {
+                $this->client->get('/index_instalacion.asp');
+                $transformedUsernameSupport = $this->mess_userpass('Support');
+                $transformedPasswordSupport = $this->mess_userpass($this->password);
+                $loginResponse = $this->client->post('/cgi-bin/te_acceso_router.cgi', [
+                    'form_params' => [
+                        'curWebPage' => '/me_install.asp',
+                        'loginUsername' => $transformedUsernameSupport,
+                        'loginPassword' => $transformedPasswordSupport,
+                    ],
+                ]);
+                if ($loginResponse->getStatusCode() === 200) {
+                    $installHtml = (string) $this->client->get('/me_install.asp')->getBody();
+                    if (preg_match("/var sessionKey = '(\d+)';/", $installHtml, $m)) {
+                        $sessionKey = $m[1];
+                        $loginMethod = 'support';
+                    }
+                }
+            } catch (Exception $eSupport) {
+                // Si el flujo Support tira excepción la ignoramos y caemos al variante.
             }
 
-            // PASO 3: Obtener me_install.asp para extraer sessionKey
-            $installResponse = $this->client->get('/me_install.asp');
-            $installHtml = (string) $installResponse->getBody();
-
-            if (!preg_match("/var sessionKey = '(\d+)';/", $installHtml, $matches)) {
-                throw new Exception("No se pudo obtener la sessionKey desde me_install.asp");
+            // INTENTO 2 (firmware variante): login con "user" + /instalacion.
+            if ($sessionKey === null) {
+                $transformedUser = $this->mess_userpass('user');
+                $transformedPass = $this->mess_userpass($this->password);
+                $this->client->post('/cgi-bin/te_acceso_router.cgi', [
+                    'form_params' => [
+                        'curWebPage' => '/te_wifi.asp',
+                        'loginUsername' => $transformedUser,
+                        'loginPassword' => $transformedPass,
+                    ],
+                ]);
+                $this->client->get('/instalacion', ['allow_redirects' => true]);
+                $installHtml = (string) $this->client->get('/me_install.asp')->getBody();
+                if (preg_match("/var sessionKey = '(\d+)';/", $installHtml, $m)) {
+                    $sessionKey = $m[1];
+                    $loginMethod = 'user_variant';
+                }
             }
-            $sessionKey = $matches[1];
+
+            if ($sessionKey === null) {
+                throw new Exception("No se pudo obtener la sessionKey desde me_install.asp (ningún flujo de login funcionó)");
+            }
 
             // PASO 4: Enviar la configuración del GPON
             $body = http_build_query([
@@ -348,6 +565,7 @@ class RouterScrapper8115
                 'debug' => [
                     'input_gpon' => $gpon,
                     'session_key' => $sessionKey,
+                    'login_method' => $loginMethod,
                     'http_status' => $configResponse->getStatusCode()
                 ]
             ];
@@ -359,6 +577,7 @@ class RouterScrapper8115
                 'debug_info' => [
                     'input_gpon' => $gpon ?? 'null',
                     'session_key' => $sessionKey ?? 'not_found',
+                    'login_method' => $loginMethod ?? 'none',
                     'trace' => $e->getTraceAsString()
                 ]
             ];
